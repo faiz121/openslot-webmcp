@@ -99,10 +99,10 @@ flowchart LR
 | --- | --- | --- |
 | Practice registration | Real Worker endpoint and D1 persistence | Add authentication, ownership verification, and tenant isolation |
 | Business ID | Generated on save, used to scope demo data, and inserted into the script snippet | Stable public identifier plus private account/tenant ID |
-| Hosted calendar | Sample slots from in-memory demo data, scoped per business ID | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
+| Hosted calendar | Sample slots from in-memory demo data, scoped per business ID and filtered by configured services | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
 | Existing calendar | Selection is stored, but no provider is connected | OAuth-based adapters for Google Calendar, Calendly, or practice-management systems |
 | WebMCP SDK | Real script that registers seven tools when `registerTool` exists | Versioned SDK, origin checks, capability discovery, and backward-compatible tool contracts |
-| Phone callback | Returns dummy appointment options; no call is placed | Queue a request, call through a telephony provider, receive office results, and expose status via request ID |
+| Phone callback | Returns matching dummy appointment options when available; no call is placed | Queue a request, call through a telephony provider, receive office results, and expose status via request ID |
 | Appointment confirmation | Changes demo state only | Idempotent booking with conflict checks, provider webhooks, audit trail, and reconciliation |
 | Security | Public demonstration endpoints | Authentication, authorization, rate limits, consent, PII controls, secrets management, and audit logs |
 

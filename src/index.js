@@ -124,13 +124,15 @@ async function updateCallback(env, callback) {
   return callback;
 }
 
-function availableSlots(slots, service, dateRange) {
+function availableSlots(slots, service, dateRange, businessServices = []) {
   const lowerService = String(service || "").toLowerCase();
   const lowerRange = String(dateRange || "").toLowerCase();
+  const configuredServices = new Set(businessServices.map((item) => String(item).toLowerCase()));
   return slots.filter((slot) => {
+    const configured = !configuredServices.size || configuredServices.has(slot.service.toLowerCase());
     const serviceMatches = !lowerService || slot.service.toLowerCase().includes(lowerService);
     const dateMatches = !lowerRange || lowerRange.includes("week") || slot.date.includes(lowerRange);
-    return slot.status === "available" && serviceMatches && dateMatches;
+    return slot.status === "available" && configured && serviceMatches && dateMatches;
   });
 }
 
@@ -200,7 +202,7 @@ async function api(request, url, env) {
       requestedService: input.service || "General appointment",
       preferredTimes: input.preferredTimes || "Any available time",
       status: "dummy-options-ready",
-      dummyAppointments: clone(initialSlots).slice(0, 2).map((slot) => ({ ...slot, source: "dummy-data" })),
+      dummyAppointments: clone(initialSlots).filter((slot) => slot.service.toLowerCase().includes(String(input.service || "").toLowerCase()) && business.services.some((service) => String(service).toLowerCase() === slot.service.toLowerCase())).slice(0, 2).map((slot) => ({ ...slot, source: "dummy-data" })),
       message: "Dummy data only: a production adapter would place the call through a telephony provider and return the office's real availability.",
       createdAt: new Date().toISOString()
     };
@@ -218,6 +220,7 @@ async function api(request, url, env) {
   if (callbackConfirmMatch && request.method === "POST") {
     const callback = await getCallback(env, callbackConfirmMatch[1]);
     if (!callback) return json({ error: "Callback request not found." }, 404);
+    if (!callback.dummyAppointments.length) return json({ error: "No dummy appointment times match this service." }, 409);
     const input = await body(request);
     const selected = callback.dummyAppointments.find((slot) => slot.id === input.slotId) || callback.dummyAppointments[0];
     callback.status = "dummy-appointment-confirmed";
@@ -231,7 +234,7 @@ async function api(request, url, env) {
     const input = await body(request);
     const business = await getBusiness(env, input.businessId || BUSINESS_ID);
     if (!business) return json({ error: "Business not found." }, 404);
-    return json({ businessId: business.id, slots: availableSlots(slotsForBusiness(business.id), input.service, input.dateRange), source: "mock-calendar" });
+    return json({ businessId: business.id, slots: availableSlots(slotsForBusiness(business.id), input.service, input.dateRange, business.services), source: "mock-calendar" });
   }
 
   if (url.pathname === "/api/hold" && request.method === "POST") {
@@ -358,9 +361,9 @@ const BUSINESS_PAGE = String.raw`<!doctype html>
     let callbackRequest;
     document.getElementById('callback').addEventListener('click', async () => {
       callbackRequest = await fetch('/api/callback', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ businessId:registeredBusinessId, service:'New patient exam', preferredTimes:'Weekday mornings' }) }).then((response) => response.json());
-      document.getElementById('callback-status').textContent = callbackRequest.status === 'dummy-options-ready' ? 'Dummy options ready. Request ID: ' + callbackRequest.requestId : 'Unable to queue sample callback.';
+      document.getElementById('callback-status').textContent = callbackRequest.status === 'dummy-options-ready' ? (callbackRequest.dummyAppointments.length ? 'Dummy options ready. Request ID: ' + callbackRequest.requestId : 'No dummy times match this service. Request ID: ' + callbackRequest.requestId) : 'Unable to queue sample callback.';
       document.getElementById('poll-callback').hidden = false;
-      document.getElementById('confirm-callback').hidden = false;
+      document.getElementById('confirm-callback').hidden = !callbackRequest.dummyAppointments.length;
     });
     document.getElementById('poll-callback').addEventListener('click', async () => {
       const result = await fetch('/api/callback/' + callbackRequest.id).then((response) => response.json());
