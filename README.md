@@ -99,7 +99,7 @@ flowchart LR
 | --- | --- | --- |
 | Practice registration | Real Worker endpoint and D1 persistence | Add authentication, ownership verification, and tenant isolation |
 | Business ID | Generated on save, used to scope demo data, and inserted into the script snippet | Stable public identifier plus private account/tenant ID |
-| Hosted calendar | Sample slots from in-memory demo data, scoped per business ID and filtered by configured services | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
+| Hosted calendar | Sample slots from a fixed in-memory service template, scoped per business ID and filtered by configured services | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
 | Existing calendar | Selection is stored, but no provider is connected | OAuth-based adapters for Google Calendar, Calendly, or practice-management systems |
 | WebMCP SDK | Real script that registers seven tools when `registerTool` exists | Versioned SDK, origin checks, capability discovery, and backward-compatible tool contracts |
 | Phone callback | Returns matching dummy appointment options when available; no call is placed | Queue a request, call through a telephony provider, receive office results, and expose status via request ID |
@@ -176,6 +176,8 @@ The script registers these tools when the host browser exposes `document.modelCo
 - `confirm_dental_callback_time`
 
 The calendar adapters and telephony integration are intentionally simulated for a demo. Callback requests return dummy appointment options, and confirmation only changes the demo request state. Do not use this project with real patient information, production calendars, or real telephony without adding authentication, authorization, tenant isolation, audit logging, privacy controls, and provider-specific adapters.
+
+The demo calendar contains only a fixed sample set of services and times. A configured service that is not represented in that sample data will correctly return zero demo results; that does not indicate a failed production calendar integration.
 
 ## Run locally
 
