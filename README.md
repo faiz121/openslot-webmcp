@@ -24,12 +24,12 @@ The practice owner uses `/business` to register a practice. The Worker generates
 
 ```mermaid
 flowchart LR
-    Owner[Practice owner] --> Setup[/business setup page]
+    Owner[Practice owner] --> Setup[Business setup page]
     Setup -->|Save practice setup| Worker[Cloudflare Worker]
     Worker -->|Create business ID + save profile| D1[(Cloudflare D1)]
     Worker -->|Return generated snippet| Setup
     Setup -->|Owner copies script| Site[Practice booking page]
-    Site --> SDK[/sdk.js/]
+    Site --> SDK[SDK script]
     SDK -->|registerTool| Context[Browser WebMCP context]
     Context -->|Agent discovers tools| Agent[AI agent]
     Agent -->|Tool requests| Worker
