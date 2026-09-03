@@ -9,11 +9,12 @@ Live demo: https://openslot-webmcp-demo.faizmohammed178.workers.dev/
 - `/` — simulated Bright Smile Dental patient website
 - `/business` — simulated practice-owner setup page
 - `/sdk.js` — embeddable WebMCP registration script
+- D1-backed business registration and generated business IDs
 - Mock appointment search, hold, and confirmation
 - Hosted-calendar and existing-calendar integration choices
-- Simulated phone-callback queue (no real calls are placed)
+- Simulated phone-callback request, polling, dummy options, and confirmation (no real calls are placed)
 
-The business setup page demonstrates the intended integration model: a practice owner registers the business, chooses a calendar connection, and adds one script to the booking page. The practice can continue owning its booking configuration while the service handles the agent-facing tools and distribution boundary.
+The business setup page explains the intended integration model: a practice owner registers the business, chooses a calendar connection, saves the setup to D1, and receives a generated business ID for the website script. The practice can continue owning its booking configuration while the service handles the agent-facing tools and distribution boundary.
 
 ## WebMCP tools
 
@@ -23,8 +24,11 @@ The script registers these tools when the host browser exposes `document.modelCo
 - `search_dental_appointment_slots`
 - `hold_dental_appointment_slot`
 - `confirm_dental_appointment`
+- `request_dental_callback`
+- `poll_dental_callback_status`
+- `confirm_dental_callback_time`
 
-The data and callback are intentionally simulated for a demo. Do not use this project with real patient information, production calendars, or real telephony without adding authentication, authorization, tenant isolation, audit logging, privacy controls, and provider-specific adapters.
+The calendar adapters and telephony integration are intentionally simulated for a demo. Callback requests return dummy appointment options, and confirmation only changes the demo request state. Do not use this project with real patient information, production calendars, or real telephony without adding authentication, authorization, tenant isolation, audit logging, privacy controls, and provider-specific adapters.
 
 ## Run locally
 
@@ -40,7 +44,13 @@ Then open `http://localhost:8787/` or `http://localhost:8787/business`.
 npx wrangler deploy
 ```
 
-Cloudflare Workers serves both the Worker API and the static files in `public/`.
+Apply the D1 migration before the first production deploy:
+
+```sh
+npx wrangler d1 migrations apply openslot-webmcp --remote
+```
+
+Cloudflare Workers serves both the Worker API and the static files in `public/`; D1 stores businesses and callback request state.
 
 ## License
 

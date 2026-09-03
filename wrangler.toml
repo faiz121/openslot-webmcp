@@ -4,3 +4,8 @@ compatibility_date = "2026-09-02"
 
 [assets]
 directory = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "openslot-webmcp"
+database_id = "bbe21839-1278-4cf8-b22a-7c68c2242246"

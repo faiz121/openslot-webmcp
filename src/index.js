@@ -11,6 +11,7 @@ const defaultBusinessProfile = {
 };
 
 let businessProfile = clone(defaultBusinessProfile);
+let callbacks = new Map();
 
 const initialSlots = [
   { id: "slot-cleaning-tue-1000", service: "Cleaning", date: "2026-09-08", time: "10:00 AM", duration: 60, status: "available" },
@@ -58,6 +59,71 @@ async function body(request) {
   try { return await request.json(); } catch { return {}; }
 }
 
+function businessFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    location: row.location,
+    phone: row.phone,
+    services: JSON.parse(row.services_json),
+    integration: row.integration,
+    callbackEnabled: Boolean(row.callback_enabled),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function getBusiness(env, id = BUSINESS_ID) {
+  if (env.DB) {
+    const row = await env.DB.prepare("SELECT * FROM businesses WHERE id = ?").bind(id).first();
+    if (row) return businessFromRow(row);
+    if (id !== BUSINESS_ID) return null;
+    await saveBusiness(env, defaultBusinessProfile);
+  }
+  return clone(id === businessProfile.id ? businessProfile : defaultBusinessProfile);
+}
+
+async function saveBusiness(env, profile) {
+  businessProfile = clone(profile);
+  if (!env.DB) return businessProfile;
+  const now = new Date().toISOString();
+  await env.DB.prepare(`INSERT INTO businesses (id, name, location, phone, services_json, integration, callback_enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, location=excluded.location, phone=excluded.phone, services_json=excluded.services_json, integration=excluded.integration, callback_enabled=excluded.callback_enabled, updated_at=excluded.updated_at`)
+    .bind(profile.id, profile.name, profile.location, profile.phone, JSON.stringify(profile.services), profile.integration, profile.callbackEnabled ? 1 : 0, now, now)
+    .run();
+  return { ...profile, createdAt: now, updatedAt: now };
+}
+
+async function saveCallback(env, callback) {
+  callbacks.set(callback.id, clone(callback));
+  if (env.DB) {
+    await env.DB.prepare("INSERT INTO callbacks (id, business_id, status, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(callback.id, callback.businessId, callback.status, JSON.stringify(callback), callback.createdAt, callback.createdAt)
+      .run();
+  }
+  return callback;
+}
+
+async function getCallback(env, id) {
+  if (env.DB) {
+    const row = await env.DB.prepare("SELECT payload_json FROM callbacks WHERE id = ?").bind(id).first();
+    if (row) return JSON.parse(row.payload_json);
+  }
+  return callbacks.get(id) || null;
+}
+
+async function updateCallback(env, callback) {
+  callbacks.set(callback.id, clone(callback));
+  if (env.DB) {
+    await env.DB.prepare("UPDATE callbacks SET status = ?, payload_json = ?, updated_at = ? WHERE id = ?")
+      .bind(callback.status, JSON.stringify(callback), new Date().toISOString(), callback.id)
+      .run();
+  }
+  return callback;
+}
+
 function availableSlots(service, dateRange) {
   const lowerService = String(service || "").toLowerCase();
   const lowerRange = String(dateRange || "").toLowerCase();
@@ -68,39 +134,69 @@ function availableSlots(service, dateRange) {
   });
 }
 
-async function api(request, url) {
+async function api(request, url, env) {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
 
   if (url.pathname === "/api/business") {
-    return json(businessProfile);
+    const requestedId = url.searchParams.get("businessId") || BUSINESS_ID;
+    const business = await getBusiness(env, requestedId);
+    return business ? json(business) : json({ error: "Business not found." }, 404);
   }
 
   if (url.pathname === "/api/business/register" && request.method === "POST") {
     const input = await body(request);
-    businessProfile = {
-      ...businessProfile,
-      name: input.name || businessProfile.name,
-      location: input.location || businessProfile.location,
-      phone: input.phone || businessProfile.phone,
-      services: Array.isArray(input.services) && input.services.length ? input.services : businessProfile.services,
-      integration: input.integration || businessProfile.integration,
+    const generatedId = `biz-${crypto.randomUUID().slice(0, 8)}`;
+    const profile = {
+      id: generatedId,
+      name: input.name || "Unnamed practice",
+      location: input.location || "Address to be added",
+      phone: input.phone || "Phone to be added",
+      services: Array.isArray(input.services) && input.services.length ? input.services : ["General appointment"],
+      integration: input.integration || "hosted-calendar",
       callbackEnabled: input.callbackEnabled !== false
     };
-    return json({ ok: true, business: businessProfile }, 201);
+    const business = await saveBusiness(env, profile);
+    return json({ ok: true, business, next: "Add the generated business ID to the website script, then test the agent-facing tools." }, 201);
   }
 
   if (url.pathname === "/api/callback" && request.method === "POST") {
     const input = await body(request);
-    return json({
+    const business = await getBusiness(env, input.businessId || BUSINESS_ID);
+    if (!business) return json({ error: "Business not found." }, 404);
+    const callback = {
       id: `callback-${crypto.randomUUID()}`,
-      businessId: BUSINESS_ID,
-      business: businessProfile.name,
-      phone: businessProfile.phone,
+      requestId: `request-${crypto.randomUUID().slice(0, 8)}`,
+      businessId: business.id,
+      business: business.name,
+      phone: business.phone,
       requestedService: input.service || "General appointment",
       preferredTimes: input.preferredTimes || "Any available time",
-      status: "simulated-call-queued",
-      message: "This demo queues a simulated callback. A production adapter would place the call through a telephony provider."
-    }, 202);
+      status: "dummy-options-ready",
+      dummyAppointments: clone(initialSlots).slice(0, 2).map((slot) => ({ ...slot, source: "dummy-data" })),
+      message: "Dummy data only: a production adapter would place the call through a telephony provider and return the office's real availability.",
+      createdAt: new Date().toISOString()
+    };
+    await saveCallback(env, callback);
+    return json(callback, 202);
+  }
+
+  const callbackMatch = url.pathname.match(/^\/api\/callback\/([^/]+)$/);
+  if (callbackMatch && request.method === "GET") {
+    const callback = await getCallback(env, callbackMatch[1]);
+    return callback ? json(callback) : json({ error: "Callback request not found." }, 404);
+  }
+
+  const callbackConfirmMatch = url.pathname.match(/^\/api\/callback\/([^/]+)\/confirm$/);
+  if (callbackConfirmMatch && request.method === "POST") {
+    const callback = await getCallback(env, callbackConfirmMatch[1]);
+    if (!callback) return json({ error: "Callback request not found." }, 404);
+    const input = await body(request);
+    const selected = callback.dummyAppointments.find((slot) => slot.id === input.slotId) || callback.dummyAppointments[0];
+    callback.status = "dummy-appointment-confirmed";
+    callback.confirmedAppointment = selected;
+    callback.message = "Dummy confirmation only: no real appointment was booked.";
+    await updateCallback(env, callback);
+    return json(callback, 201);
   }
 
   if (url.pathname === "/api/slots" && request.method === "POST") {
@@ -137,6 +233,7 @@ async function api(request, url) {
     slots = clone(initialSlots);
     holds = new Map();
     appointments = [];
+    callbacks = new Map();
     businessProfile = clone(defaultBusinessProfile);
     return json({ ok: true });
   }
@@ -145,9 +242,9 @@ async function api(request, url) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/")) return api(request, url);
+    if (url.pathname.startsWith("/api/")) return api(request, url, env);
     if (url.pathname === "/sdk.js") return sdk();
     if (url.pathname === "/business") return businessPage();
     return html();
@@ -199,9 +296,9 @@ const BUSINESS_PAGE = String.raw`<!doctype html>
         </form>
       </section>
       <aside>
-        <section class="card side-card"><span class="pill">Website installation</span><h2>Add one script</h2><p>The practice owner adds this small snippet to the booking page. The page still looks like a normal dental website; WebMCP tools are available to compatible agents in the background.</p><div class="snippet">&lt;script src="https://openslot-webmcp-demo.faizmohammed178.workers.dev/sdk.js"
-  data-business-id="bright-smile-dental"&gt;&lt;/script&gt;</div></section>
-        <section class="card side-card"><span class="pill">Test only</span><h2>Phone callback</h2><p>This button demonstrates the workflow without placing a real call or requiring a phone provider.</p><button id="callback" class="secondary" type="button">Queue a sample callback</button><div id="callback-status" class="status" role="status"></div></section>
+        <section class="card side-card"><span class="pill">After saving</span><h2>Add one script</h2><p>Saving creates a business ID and stores the setup in D1. Copy the generated snippet into the practice's booking page. The page still looks like a normal dental website; compatible agents discover the tools in the background.</p><div id="snippet" class="snippet">&lt;script src="https://openslot-webmcp-demo.faizmohammed178.workers.dev/sdk.js"
+  data-business-id="your-business-id"&gt;&lt;/script&gt;</div><p id="business-id" class="small">Your business ID will appear here after setup.</p></section>
+        <section class="card side-card"><span class="pill">Test only</span><h2>Phone callback</h2><p>The demo returns dummy appointment options, lets an agent poll the request, and accepts a dummy confirmation. No real call is placed.</p><button id="callback" class="secondary" type="button">Queue a sample callback</button><div id="callback-status" class="status" role="status"></div><button id="poll-callback" class="secondary" type="button" hidden>Poll callback status</button><button id="confirm-callback" class="secondary" type="button" hidden>Confirm first dummy time</button></section>
         <section class="card"><h2>Next step</h2><p class="small">In production, the calendar adapter and telephony provider would be connected after the practice verifies ownership and grants access.</p><a class="back" href="/">Open the patient page →</a></section>
       </aside>
     </div>
@@ -209,15 +306,33 @@ const BUSINESS_PAGE = String.raw`<!doctype html>
   <script>
     const form = document.getElementById('setup-form');
     const setupStatus = document.getElementById('setup-status');
+    let registeredBusinessId = 'bright-smile-dental';
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const data = new FormData(form);
       const result = await fetch('/api/business/register', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name:data.get('name'), location:data.get('location'), phone:data.get('phone'), services:String(data.get('services')).split(',').map((item) => item.trim()).filter(Boolean), integration:data.get('integration'), callbackEnabled:document.getElementById('callbackEnabled').checked }) }).then((response) => response.json());
-      setupStatus.textContent = result.ok ? 'Practice setup saved. The booking page is ready.' : 'Please review the details and try again.';
+      setupStatus.textContent = result.ok ? 'Practice setup saved. Your business ID and install snippet are ready.' : 'Please review the details and try again.';
+      if (result.ok) {
+        const id = result.business.id;
+        registeredBusinessId = id;
+        document.getElementById('snippet').textContent = '<script src="https://openslot-webmcp-demo.faizmohammed178.workers.dev/sdk.js"\\n  data-business-id="' + id + '"><\\/script>';
+        document.getElementById('business-id').textContent = 'Business ID: ' + id + ' · Stored in Cloudflare D1.';
+      }
     });
+    let callbackRequest;
     document.getElementById('callback').addEventListener('click', async () => {
-      const result = await fetch('/api/callback', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ service:'New patient exam', preferredTimes:'Weekday mornings' }) }).then((response) => response.json());
-      document.getElementById('callback-status').textContent = result.status === 'simulated-call-queued' ? 'Sample callback queued — no real call was placed.' : 'Unable to queue sample callback.';
+      callbackRequest = await fetch('/api/callback', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ businessId:registeredBusinessId, service:'New patient exam', preferredTimes:'Weekday mornings' }) }).then((response) => response.json());
+      document.getElementById('callback-status').textContent = callbackRequest.status === 'dummy-options-ready' ? 'Dummy options ready. Request ID: ' + callbackRequest.requestId : 'Unable to queue sample callback.';
+      document.getElementById('poll-callback').hidden = false;
+      document.getElementById('confirm-callback').hidden = false;
+    });
+    document.getElementById('poll-callback').addEventListener('click', async () => {
+      const result = await fetch('/api/callback/' + callbackRequest.id).then((response) => response.json());
+      document.getElementById('callback-status').textContent = 'Polled status: ' + result.status + ' · ' + result.dummyAppointments.length + ' dummy times available.';
+    });
+    document.getElementById('confirm-callback').addEventListener('click', async () => {
+      const result = await fetch('/api/callback/' + callbackRequest.id + '/confirm', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ slotId:callbackRequest.dummyAppointments[0].id }) }).then((response) => response.json());
+      document.getElementById('callback-status').textContent = result.status === 'dummy-appointment-confirmed' ? 'Dummy time confirmed — no real appointment was booked.' : 'Unable to confirm sample time.';
     });
   </script>
 </body>
@@ -303,6 +418,47 @@ const SDK = String.raw`(() => {
       execute: async (input) => {
         const result = await call("/api/confirm", input);
         show("Confirmed for " + result.patient.name + ": " + result.slot.service + " on " + result.slot.date + " at " + result.slot.time + ".");
+        return result;
+      }
+    });
+
+    modelContext.registerTool({
+      name: "request_dental_callback",
+      title: "Request a callback from the dental office",
+      description: "Request a phone callback and receive dummy appointment options for this demo. No real call is placed.",
+      inputSchema: { type: "object", properties: { service: { type: "string" }, preferredTimes: { type: "string" } }, required: ["service"] },
+      annotations: { readOnlyHint: false },
+      execute: async (input) => {
+        const result = await call("/api/callback", input);
+        show("Dummy callback options are ready. Request ID: " + result.requestId);
+        return result;
+      }
+    });
+
+    modelContext.registerTool({
+      name: "poll_dental_callback_status",
+      title: "Poll callback status",
+      description: "Check the status of a previously requested dental callback using its callback ID.",
+      inputSchema: { type: "object", properties: { callbackId: { type: "string" } }, required: ["callbackId"] },
+      annotations: { readOnlyHint: true },
+      execute: async ({ callbackId }) => {
+        const result = await fetch(apiBase + "/api/callback/" + encodeURIComponent(callbackId)).then((response) => response.json());
+        show(result);
+        return result;
+      }
+    });
+
+    modelContext.registerTool({
+      name: "confirm_dental_callback_time",
+      title: "Confirm a callback appointment time",
+      description: "Confirm one of the dummy appointment options returned by a callback request. No real appointment is booked in this demo.",
+      inputSchema: { type: "object", properties: { callbackId: { type: "string" }, slotId: { type: "string" } }, required: ["callbackId", "slotId"] },
+      annotations: { readOnlyHint: false },
+      execute: async ({ callbackId, slotId }) => {
+        const response = await fetch(apiBase + "/api/callback/" + encodeURIComponent(callbackId) + "/confirm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ slotId, businessId }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Callback confirmation error");
+        show("Dummy appointment time confirmed; no real appointment was booked.");
         return result;
       }
     });
