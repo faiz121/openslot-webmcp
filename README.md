@@ -1,205 +1,155 @@
-# OpenSlot WebMCP demo
+# OpenSlot — WebMCP for everyday businesses
 
-OpenSlot is a small reference implementation for making ordinary business websites agent-bookable. A business adds one script; OpenSlot owns the stable agent-facing tool contract and the consent boundary, while calendar and telephony adapters absorb the differences between providers. WebMCP is the zero-install browser surface today, not the limit of the platform.
+**A drop-in script to help businesses join the agent-ready web.**
 
-The public demo uses a simulated dental practice, but the pattern can extend to restaurants, home services, clinics, and other businesses with appointment or callback workflows.
+WebMCP gives websites a way to expose actions to AI agents. OpenSlot explores how to make that practical for a business that does not have a team building agent integrations.
 
-Live demo: https://openslot-webmcp-demo.faizmohammed178.workers.dev/
+The idea is simple: register the business, choose how it wants to handle appointments, and add one script to its existing website. OpenSlot supplies the browser tools and the service behind them. The business keeps its website; its customers gain another way to get things done there with their agents.
 
-## What is included
+Our focus is **making WebMCP easier to adopt**, not building another dental booking site. The challenge demo uses a fictional dental practice to make the idea concrete. The same approach could serve salons, repair shops, fitness studios, and other appointment-based businesses.
 
-- `/` — simulated Bright Smile Dental patient website
-- `/business` — simulated practice-owner setup page
-- `/sdk.js` — embeddable WebMCP registration script
-- D1-backed business registration and generated business IDs
-- Mock appointment search, hold, and confirmation
-- Hosted-calendar and existing-calendar integration choices
-- Simulated phone-callback request, polling, dummy options, and confirmation (no real calls are placed)
+[Try the simulated business website](https://openslot-webmcp-demo.faizmohammed178.workers.dev/) · [Business registration](https://openslot-webmcp-demo.faizmohammed178.workers.dev/business) · [Architecture](docs/architecture.md) · [Submission copy and testing guide](docs/devpost-submission.md)
 
-The business setup page explains the intended integration model: a practice owner registers the business, chooses a calendar connection, saves the setup to D1, and receives a generated business ID for the website script. The practice can continue owning its booking configuration while the service handles the agent-facing tools and distribution boundary.
+> This is a challenge prototype. Registration, WebMCP tool registration, and backend demo workflows are implemented. Availability, bookings, and phone results are simulated; no external calendar is connected and no phone call is placed. Use fictional information only. The deployed SDK and its demo workflows have also been browser-tested from a separate origin.
 
-## Architecture
+## One script, an existing website, new ways to help customers
 
-### What the demo does today
+The owner-facing setup produces a snippet like this:
 
-The practice owner uses `/business` to register a practice. The Worker generates a business ID, stores the practice configuration in D1, and returns the script snippet containing that ID. The owner adds the snippet to the practice's booking page. A compatible browser loads the SDK silently and the SDK registers tools with the browser's WebMCP context.
-
-The business ID is the tenant boundary for the demo: services, slots, holds, appointments, and callback requests are associated with the business that supplied the ID. The business registry in D1 is the beginning of a future directory of agent-ready businesses.
-
-```mermaid
-flowchart LR
-    Owner[Practice owner] --> Setup[Business setup page]
-    Setup -->|Save practice setup| Worker[Cloudflare Worker]
-    Worker -->|Create business ID + save profile| D1[(Cloudflare D1 registry)]
-    Worker -->|Return generated snippet| Setup
-    Setup -->|Owner copies script| Site[Practice booking page]
-    Site --> SDK[SDK script]
-    SDK -->|registerTool| Context[Browser WebMCP context]
-    Context -->|Agent discovers tools| Agent[AI agent]
-    Agent -->|Tool requests| Worker
-    Worker --> D1
-    D1 --> Directory[Agent-ready business directory]
+```html
+<script
+  src="https://openslot-webmcp-demo.faizmohammed178.workers.dev/sdk.js"
+  data-business-id="YOUR_BUSINESS_ID"
+></script>
 ```
 
-### Appointment booking flow
+Replace `YOUR_BUSINESS_ID` with the ID returned by registration. It is a public routing identifier, not a password or proof of ownership.
 
-The booking tools intentionally separate read and write actions. The agent can search availability, but holding and confirming a slot are state-changing operations that should require user approval.
+On a supported browser, the script registers structured WebMCP functions for discovering services, finding times, holding a slot, confirming a booking, and following a callback request. An agent can use those functions instead of trying to infer the entire workflow from buttons and page text. The human chooses what they want and reviews the proposed action.
 
-```mermaid
-sequenceDiagram
-    participant A as AI agent
-    participant B as Browser WebMCP
-    participant W as Worker API
-    participant C as Calendar adapter
+There is no customer-facing chatbot widget to install and no separate MCP server for each merchant to operate. The shared OpenSlot service handles the backend in this design. The script does **not** make a private calendar accessible by itself: real business systems would still need configuration and authorized connections.
 
-    A->>B: Search appointment slots
-    B->>W: POST /api/slots
-    W->>C: Read availability
-    C-->>W: Available slots
-    W-->>B: Slots
-    B-->>A: Show options
-    A->>B: Hold selected slot
-    B->>W: POST /api/hold
-    W-->>B: Temporary hold
-    B-->>A: Ask user to approve
-    A->>B: Confirm after approval
-    B->>W: POST /api/confirm
-    W->>C: Create appointment
-    C-->>W: Confirmation
-    W-->>A: Appointment confirmed
-```
+The demo uses `document.modelContext.registerTool`. If that API is unavailable, the SDK exits without registering tools and leaves the normal website in place. See the challenge's [browser setup instructions](https://webmcp.devpost.com/resources).
 
-### Phone callback flow
+## Start simple, connect more when needed
 
-The callback flow is asynchronous by design. The initial request returns a request ID. An agent can poll that ID and then confirm one of the proposed times.
+These are the intended onboarding paths, not three completed integrations:
 
-```mermaid
-stateDiagram-v2
-    [*] --> DummyOptionsReady: request_dental_callback
-    DummyOptionsReady --> DummyOptionsReady: poll_dental_callback_status
-    DummyOptionsReady --> DummyAppointmentConfirmed: confirm_dental_callback_time
-    DummyAppointmentConfirmed --> [*]
-```
-
-The same state machine can later sit in front of a real telephony provider:
-
-```mermaid
-flowchart LR
-    Request[Agent requests callback] --> Queue[Callback queue]
-    Queue --> Phone[Telephony provider calls office]
-    Phone --> Results[Office returns available times]
-    Results --> Poll[Agent polls request ID]
-    Poll --> Confirm[User confirms a time]
-    Confirm --> Calendar[Calendar adapter books appointment]
-```
-
-## What is mocked versus what is real
-
-| Area | Current demo | Ideal implementation |
+| Business need | Intended OpenSlot experience | What the demo does today |
 | --- | --- | --- |
-| Practice registration | Real Worker endpoint and D1 persistence | Add authentication, ownership verification, and tenant isolation |
-| Business ID | Generated on save, used to scope demo data, and inserted into the script snippet | Stable public identifier plus private account/tenant ID |
-| Hosted calendar | Sample slots from a fixed in-memory service template, scoped per business ID and filtered by configured services | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
-| Existing calendar | Selection is stored, but no provider is connected | OAuth-based adapters for Google Calendar, Calendly, or practice-management systems |
-| WebMCP SDK | Real script that registers seven tools when `registerTool` exists | Versioned SDK, origin checks, capability discovery, and backward-compatible tool contracts |
-| Phone callback | Returns matching dummy appointment options when available; no call is placed | Queue a request, call through a telephony provider, receive office results, and expose status via request ID |
-| Appointment confirmation | Changes demo state only | Idempotent booking with conflict checks, provider webhooks, audit trail, and reconciliation |
-| Security | Public demonstration endpoints | Authentication, authorization, rate limits, consent, PII controls, secrets management, and audit logs |
+| “I do not have online scheduling.” | Use an OpenSlot-hosted calendar; configure services, opening hours, staff, and blocked times. | Stores the hosted-calendar preference and returns fixed sample availability. There is no schedule editor yet. |
+| “We already have a calendar or booking system.” | Authorize a supported connection and keep that system as the source of truth. | Stores the existing-calendar preference. No OAuth flow or external provider is connected; other business-system connectors are future work. |
+| “Some requests still need a phone conversation.” | Opt into a phone workflow, verify the business number, and authorize the service to handle the agreed call flow. | Stores a callback preference and demonstrates request → poll → dummy time confirmation. The preference does not yet disable the callback tools or API. No telephony provider is connected. |
 
-## What happens after a practice owner submits the form
+The goal is to let businesses grow into more capable integrations without rebuilding their website or maintaining a separate set of agent tools for every provider.
 
-1. The Worker validates the practice details and generates a business ID such as `biz-a1b2c3d4`.
-2. The business profile and selected integration mode are stored in D1.
-3. The setup page displays a script containing that business ID.
-4. The owner adds the script to the practice's booking page.
-5. A compatible browser loads the SDK. Normal visitors see the regular website; the tools are exposed to the browser's WebMCP context in the background.
-6. The owner eventually configures either the hosted calendar or an authorized external calendar adapter.
-7. Agents can search, hold, and confirm appointments, or request a callback and follow its status using the request ID.
+## What is working now
 
-## Ideal production architecture
+- Business registration checks required fields, saves the profile and preferences in Cloudflare D1, and returns a generated business ID. This is basic validation, not business-ownership verification.
+- The setup page turns that ID into an installation snippet.
+- The SDK registers seven WebMCP tools on the simulated business page in a compatible browser.
+- The backend serves a business's configured service list and filters sample availability against it.
+- The appointment flow supports a five-minute demo hold and a separate confirmation. Expired holds are released lazily on later API requests.
+- Callback requests, their IDs, dummy options, and confirmation state are persisted in D1 and can be polled.
 
-The first production version can remain a small modular service: a stateless Worker API, D1 for practice configuration and appointment state, a queue for callbacks and provider work, and adapters around calendar and telephony providers. Slow or retryable provider calls should not block the browser request.
+The repository contains the **SDK, shared backend, business setup page, simulated business website, and database migration**. It is not just a script-only mockup.
+
+## How the current demo fits together
 
 ```mermaid
-flowchart TB
-    subgraph Client[Client surfaces]
-        Website[Business website]
-        Browser[WebMCP-enabled browser]
-        Agent[AI agent]
-    end
-
-    Website --> SDK[Versioned OpenSlot SDK]
-    Browser --> SDK
-    Agent --> Browser
-
-    SDK --> Gateway[Worker API / tenant router]
-    Gateway --> Auth[Auth + consent + rate limits]
-    Auth --> Business[Business service]
-    Auth --> Booking[Booking service]
-    Auth --> Callback[Callback service]
-
-    Business --> D1[(D1: businesses, settings)]
-    Booking --> D1B[(D1: holds, appointments, audit events)]
-    Callback --> Queue[Cloudflare Queue]
-    Queue --> Telephony[Telephony adapter]
-    Queue --> Calendar[Calendar adapter]
-    Calendar --> ExternalCal[Practice calendar / PMS]
-    Telephony --> Office[Dental office]
-    ExternalCal --> Booking
-    Office --> Telephony
+flowchart TD
+    Owner["Business owner"] --> Setup["OpenSlot registration page and API"]
+    Setup -->|"Save profile"| Profiles[("D1: business configuration")]
+    Setup --> Snippet["Generated business ID and script"]
+    Snippet -->|"Owner installs"| Site["Business website with OpenSlot SDK"]
+    Site -->|"Register functions"| Tools["Browser WebMCP tools"]
+    Agent["Customer and their agent"] -->|"Choose an action"| Tools
+    Tools -->|"SDK calls backend"| API["Worker action endpoints"]
+    API --> Callbacks[("D1: dummy callback state")]
+    API --> Samples["Fixed sample slots and in-memory bookings"]
 ```
 
-The key boundary is the adapter layer. The WebMCP tools should stay stable while each calendar or telephony provider implements the provider-specific details behind the API. Booking and confirmation should use stable idempotency keys, explicit hold expiration, provider webhook handling, and reconciliation jobs so retries cannot create duplicate appointments.
+The hosted example puts the website, SDK, and API on the same origin. To test the drop-in boundary itself, we also loaded the deployed SDK from an independent local website origin and executed registration, service lookup, slot search, hold, confirmation, callback, polling, and dummy callback confirmation through the SDK. See the [review evidence](docs/submission-review.md).
 
-WebMCP is only one delivery surface. The same OpenSlot tool contract could later be exposed through a hosted MCP endpoint, a voice agent, or another agent platform. That keeps businesses from having to build a separate integration for every agent surface.
+## Demo boundaries
 
-For concurrent booking, a production implementation should serialize hold and confirm operations per business. A Durable Object keyed by business ID is a natural Cloudflare-native option for that single-writer boundary, while D1 remains the durable source of truth. This prevents two agents from successfully claiming the same appointment during a race.
+| Area | Current behavior |
+| --- | --- |
+| Scheduling data | Fixed sample dates, September 8–11, 2026. Only Cleaning, New patient exam, and Emergency consultation have sample slots. Other configured services return zero results. |
+| Booking storage | Slots, holds, and ordinary appointments are held in Worker memory, not D1. They can reset or differ between Worker instances. This is not a concurrent booking guarantee. |
+| Calendar modes | Both selections still use the same mock calendar. A saved preference is not a connected system. |
+| Phone workflow | Dummy options are ready immediately. Polling reads stored state; it is not waiting on a real call or background queue. |
+| Approval | Tool descriptions ask for user approval and distinguish reads from writes. The backend does not independently enforce consent or authentication. |
+| Business scope | IDs route data, but public endpoints are not a secure multi-tenant product. Callback lookup uses a request ID; it is not owner-authorized access. |
+| SDK reuse | Tool names and some descriptions still refer to dentistry/Bright Smile. General-purpose naming and business-specific descriptions are not implemented yet. |
+| Cross-origin installation | The public demo allows cross-origin JSON requests and the full dummy workflow was browser-tested from a separate origin. The wildcard demo policy is not production authentication or website ownership verification. |
 
-The D1 business registry can also become a directory of agent-ready businesses. Each new business increases the set of useful destinations available to agents, while the stable tool contract keeps discovery and booking consistent across businesses.
+Do not use real customer details, patient information, business credentials, or calendar access tokens in this demo. No real appointment is booked.
 
-### Suggested production phases
+## Try the demo
 
-- **Demo:** in-memory slots, D1 business profiles, dummy callbacks, and visible test disclosures.
-- **Pilot:** authenticated business accounts, a real hosted-calendar data model, one calendar adapter, one telephony provider, durable callback queue, and audit logs.
-- **Scale:** provider webhooks, retries and dead-letter queues, idempotent booking, reconciliation jobs, observability dashboards, tenant-level rate limits, and stronger privacy controls.
+1. Open the [simulated business website](https://openslot-webmcp-demo.faizmohammed178.workers.dev/) in ChatGPT's in-app browser, or Chrome 149+ with the challenge's WebMCP testing flag enabled.
+2. Ask the agent: “This is a simulated site. List the services, then find Cleaning appointments in the demo week of September 8, 2026. Show me the options before taking action.”
+3. Choose a returned slot, ask the agent to hold it, then explicitly approve a dummy confirmation using fictional details. Do not invent slot or hold IDs.
+4. Try: “Request a simulated callback for a New patient exam. Poll the returned request ID and show me the dummy options. Do not confirm until I choose.”
+5. Open [business registration](https://openslot-webmcp-demo.faizmohammed178.workers.dev/business) to inspect the owner journey. Saving with fictional details creates a demo record and an ID-specific snippet; it does not connect a calendar or activate phone service.
 
-## WebMCP tools
+No login or API key is required. The regular website will load in other browsers, but that alone does not prove WebMCP discovery. Opening the Bright Smile homepage after registering another business still uses Bright Smile's embedded ID; registration does not automatically generate a new business website.
 
-The script registers these tools when the host browser exposes `document.modelContext.registerTool`:
+For exact tool inputs, sample-data caveats, and a second-business check, see the [testing guide](docs/devpost-submission.md#testing-instructions).
 
-- `get_dental_services`
-- `search_dental_appointment_slots`
-- `hold_dental_appointment_slot`
-- `confirm_dental_appointment`
-- `request_dental_callback`
-- `poll_dental_callback_status`
-- `confirm_dental_callback_time`
+## WebMCP functions in this prototype
 
-The calendar adapters and telephony integration are intentionally simulated for a demo. Callback requests return dummy appointment options, and confirmation only changes the demo request state. Do not use this project with real patient information, production calendars, or real telephony without adding authentication, authorization, tenant isolation, audit logging, privacy controls, and provider-specific adapters.
+| Function | Purpose |
+| --- | --- |
+| `get_dental_services()` | Read the registered business's services. |
+| `search_dental_appointment_slots({ service, dateRange })` | Find matching sample availability. |
+| `hold_dental_appointment_slot({ slotId })` | Create a temporary in-memory hold. |
+| `confirm_dental_appointment({ holdId, name, email })` | Confirm a dummy appointment. |
+| `request_dental_callback({ service, preferredTimes })` | Create a stored dummy callback request. |
+| `poll_dental_callback_status({ callbackId })` | Read that request's status and options. |
+| `confirm_dental_callback_time({ callbackId, slotId })` | Confirm one of its dummy options. |
 
-The demo calendar contains only a fixed sample set of services and times. A configured service that is not represented in that sample data will correctly return zero demo results; that does not indicate a failed production calendar integration.
+Use the callback response's `requestId` as `callbackId` for the next tool; `id` and `requestId` contain the same value.
 
 ## Run locally
 
-```sh
-npx wrangler dev
-```
-
-Then open `http://localhost:8787/` or `http://localhost:8787/business`.
-
-## Deploy
+Use Node.js 22+ and npm. These commands fetch Wrangler 4 without requiring a globally installed CLI. Run them from the repository root:
 
 ```sh
-npx wrangler deploy
+git clone https://github.com/faiz121/openslot-webmcp.git
+cd openslot-webmcp
+npx wrangler@4 d1 migrations apply openslot-webmcp --local
+npx wrangler@4 dev
 ```
 
-Apply the D1 migration before the first production deploy:
+Open `http://localhost:8787/` or `http://localhost:8787/business`. Keep the `DB` binding configured and apply the migration: the no-D1 fallback is not a reliable multi-business test environment. Local D1 is separate from the hosted database. See [Cloudflare's local D1 guide](https://developers.cloudflare.com/d1/best-practices/local-development/).
+
+The setup page's generated snippet currently hardcodes the public demo SDK URL. For local testing, replace its `src` with `/sdk.js` when embedding on your local Worker origin. This avoids accidentally sending local test data to the public demo.
+
+Run `npm test` for the tracked CORS regression checks. `node --check src/index.js` provides an additional syntax-only check; the repository does not yet include a complete booking regression suite.
+
+## Deploy your own demo
+
+Use your own Cloudflare account and database; the checked-in database ID belongs to the public challenge demo.
+
+1. Run `npx wrangler@4 login` and `npx wrangler@4 d1 create openslot-webmcp`.
+2. Put the returned `database_id` in your local `wrangler.toml`, keeping the binding named `DB`. Choose your own Worker name if needed.
+3. Replace the public demo SDK URL in the setup page's snippet strings in `src/index.js` with your deployed SDK URL. The embedded Bright Smile page already uses `/sdk.js`.
+4. Apply the migration, then deploy:
 
 ```sh
-npx wrangler d1 migrations apply openslot-webmcp --remote
+npx wrangler@4 d1 migrations apply openslot-webmcp --remote
+npx wrangler@4 deploy
 ```
 
-Cloudflare Workers serves both the Worker API and the static files in `public/`; D1 stores businesses and callback request state.
+The Worker serves the HTML pages, SDK, and API from `src/index.js`. The `public/` directory is configured for static assets and currently contains only a placeholder. No calendar, telephony, or model-provider credentials are needed for the simulation.
+
+## Next steps
+
+Next, make the tools and their descriptions business-neutral, then build the hosted schedule editor and one authorized calendar connector, with optional telephony behind an enforced business preference.
+
+Before any real bookings, add verified business accounts, server-side authorization and approval checks, durable conflict-safe booking state, idempotent confirmations, privacy controls, and provider failure handling. These are launch prerequisites, not features to postpone until scale. See the [proposed architecture](docs/architecture.md#proposed-production-path-not-implemented).
 
 ## License
 

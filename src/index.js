@@ -1,5 +1,12 @@
 const BUSINESS_ID = "bright-smile-dental";
 
+const CORS_HEADERS = Object.freeze({
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400"
+});
+
 const defaultBusinessProfile = {
   id: BUSINESS_ID,
   name: "Bright Smile Dental",
@@ -33,9 +40,7 @@ function json(data, status = 200, extraHeaders = {}) {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET,POST,OPTIONS",
-      "access-control-allow-headers": "content-type",
+      ...CORS_HEADERS,
       ...extraHeaders
     }
   });
@@ -161,7 +166,7 @@ function registrationError(input) {
 }
 
 async function api(request, url, env) {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
   releaseExpiredHolds();
 
   if (url.pathname === "/api/business") {
