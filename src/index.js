@@ -20,7 +20,7 @@ const initialSlots = [
   { id: "slot-cleaning-fri-0900", service: "Cleaning", date: "2026-09-11", time: "9:00 AM", duration: 60, status: "available" }
 ];
 
-let slots = clone(initialSlots);
+let slotsByBusiness = new Map([[BUSINESS_ID, clone(initialSlots)]]);
 let holds = new Map();
 let appointments = [];
 
@@ -124,7 +124,7 @@ async function updateCallback(env, callback) {
   return callback;
 }
 
-function availableSlots(service, dateRange) {
+function availableSlots(slots, service, dateRange) {
   const lowerService = String(service || "").toLowerCase();
   const lowerRange = String(dateRange || "").toLowerCase();
   return slots.filter((slot) => {
@@ -134,8 +134,33 @@ function availableSlots(service, dateRange) {
   });
 }
 
+function slotsForBusiness(businessId) {
+  if (!slotsByBusiness.has(businessId)) slotsByBusiness.set(businessId, clone(initialSlots));
+  return slotsByBusiness.get(businessId);
+}
+
+function releaseExpiredHolds() {
+  const now = Date.now();
+  for (const [holdId, hold] of holds) {
+    if (hold.expiresAt > now) continue;
+    const slot = slotsForBusiness(hold.businessId).find((candidate) => candidate.id === hold.slotId);
+    if (slot && slot.status === "held") slot.status = "available";
+    holds.delete(holdId);
+  }
+}
+
+function registrationError(input) {
+  const required = ["name", "location", "phone"];
+  const missing = required.filter((field) => typeof input[field] !== "string" || !input[field].trim());
+  if (missing.length) return `Missing required field(s): ${missing.join(", ")}.`;
+  if (!Array.isArray(input.services) || !input.services.some((service) => String(service).trim())) return "Add at least one service.";
+  if (!["hosted-calendar", "existing-calendar"].includes(input.integration)) return "Choose a calendar connection.";
+  return null;
+}
+
 async function api(request, url, env) {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*" } });
+  releaseExpiredHolds();
 
   if (url.pathname === "/api/business") {
     const requestedId = url.searchParams.get("businessId") || BUSINESS_ID;
@@ -145,6 +170,8 @@ async function api(request, url, env) {
 
   if (url.pathname === "/api/business/register" && request.method === "POST") {
     const input = await body(request);
+    const validationError = registrationError(input);
+    if (validationError) return json({ ok: false, error: validationError }, 400);
     const generatedId = `biz-${crypto.randomUUID().slice(0, 8)}`;
     const profile = {
       id: generatedId,
@@ -163,9 +190,10 @@ async function api(request, url, env) {
     const input = await body(request);
     const business = await getBusiness(env, input.businessId || BUSINESS_ID);
     if (!business) return json({ error: "Business not found." }, 404);
+    const requestId = `request-${crypto.randomUUID().slice(0, 8)}`;
     const callback = {
-      id: `callback-${crypto.randomUUID()}`,
-      requestId: `request-${crypto.randomUUID().slice(0, 8)}`,
+      id: requestId,
+      requestId,
       businessId: business.id,
       business: business.name,
       phone: business.phone,
@@ -201,36 +229,44 @@ async function api(request, url, env) {
 
   if (url.pathname === "/api/slots" && request.method === "POST") {
     const input = await body(request);
-    return json({ businessId: BUSINESS_ID, slots: availableSlots(input.service, input.dateRange), source: "mock-calendar" });
+    const business = await getBusiness(env, input.businessId || BUSINESS_ID);
+    if (!business) return json({ error: "Business not found." }, 404);
+    return json({ businessId: business.id, slots: availableSlots(slotsForBusiness(business.id), input.service, input.dateRange), source: "mock-calendar" });
   }
 
   if (url.pathname === "/api/hold" && request.method === "POST") {
     const input = await body(request);
-    const slot = slots.find((candidate) => candidate.id === input.slotId && candidate.status === "available");
+    const business = await getBusiness(env, input.businessId || BUSINESS_ID);
+    if (!business) return json({ error: "Business not found." }, 404);
+    const slot = slotsForBusiness(business.id).find((candidate) => candidate.id === input.slotId && candidate.status === "available");
     if (!slot) return json({ error: "That slot is no longer available." }, 409);
     const holdId = `hold-${crypto.randomUUID()}`;
     slot.status = "held";
-    holds.set(holdId, { holdId, slotId: slot.id, expiresAt: Date.now() + 5 * 60 * 1000 });
-    return json({ holdId, slot: clone(slot), expiresInSeconds: 300 });
+    holds.set(holdId, { holdId, businessId: business.id, slotId: slot.id, expiresAt: Date.now() + 5 * 60 * 1000 });
+    return json({ holdId, businessId: business.id, slot: clone(slot), expiresInSeconds: 300 });
   }
 
   if (url.pathname === "/api/confirm" && request.method === "POST") {
     const input = await body(request);
     const hold = holds.get(input.holdId);
     if (!hold || hold.expiresAt < Date.now()) return json({ error: "The hold is missing or expired." }, 409);
-    const slot = slots.find((candidate) => candidate.id === hold.slotId && candidate.status === "held");
+    if (input.businessId && input.businessId !== hold.businessId) return json({ error: "That hold belongs to another business." }, 403);
+    const slot = slotsForBusiness(hold.businessId).find((candidate) => candidate.id === hold.slotId && candidate.status === "held");
     if (!slot) return json({ error: "That slot cannot be confirmed." }, 409);
     slot.status = "confirmed";
-    const appointment = { id: `appt-${crypto.randomUUID()}`, businessId: BUSINESS_ID, slot: clone(slot), patient: { name: input.name || "Demo Patient", email: input.email || "demo@example.com" }, status: "confirmed" };
+    const appointment = { id: `appt-${crypto.randomUUID()}`, businessId: hold.businessId, slot: clone(slot), patient: { name: input.name || "Demo Patient", email: input.email || "demo@example.com" }, status: "confirmed" };
     appointments.push(appointment);
     holds.delete(input.holdId);
     return json(appointment, 201);
   }
 
-  if (url.pathname === "/api/state") return json({ businessId: BUSINESS_ID, slots: clone(slots), appointments: clone(appointments) });
+  if (url.pathname === "/api/state") {
+    const requestedId = url.searchParams.get("businessId") || BUSINESS_ID;
+    return json({ businessId: requestedId, slots: clone(slotsForBusiness(requestedId)), appointments: clone(appointments.filter((appointment) => appointment.businessId === requestedId)) });
+  }
 
   if (url.pathname === "/api/reset" && request.method === "POST") {
-    slots = clone(initialSlots);
+    slotsByBusiness = new Map([[BUSINESS_ID, clone(initialSlots)]]);
     holds = new Map();
     appointments = [];
     callbacks = new Map();
@@ -373,7 +409,7 @@ const SDK = String.raw`(() => {
       inputSchema: { type: "object", properties: {} },
       annotations: { readOnlyHint: true },
       execute: async () => {
-        const result = await fetch(apiBase + "/api/business").then((response) => response.json());
+        const result = await fetch(apiBase + "/api/business?businessId=" + encodeURIComponent(businessId)).then((response) => response.json());
         show(result.services.join(" • "));
         return result;
       }

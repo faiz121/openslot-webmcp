@@ -1,6 +1,8 @@
 # OpenSlot WebMCP demo
 
-OpenSlot is a small reference implementation for making appointment booking available to compatible AI agents through WebMCP. The public demo is a simulated dental practice: patients see a conventional booking page, while compatible agents can discover appointment tools in the background.
+OpenSlot is a small reference implementation for making ordinary business websites agent-bookable. A business adds one script; OpenSlot owns the stable agent-facing tool contract and the consent boundary, while calendar and telephony adapters absorb the differences between providers. WebMCP is the zero-install browser surface today, not the limit of the platform.
+
+The public demo uses a simulated dental practice, but the pattern can extend to restaurants, home services, clinics, and other businesses with appointment or callback workflows.
 
 Live demo: https://openslot-webmcp-demo.faizmohammed178.workers.dev/
 
@@ -22,11 +24,13 @@ The business setup page explains the intended integration model: a practice owne
 
 The practice owner uses `/business` to register a practice. The Worker generates a business ID, stores the practice configuration in D1, and returns the script snippet containing that ID. The owner adds the snippet to the practice's booking page. A compatible browser loads the SDK silently and the SDK registers tools with the browser's WebMCP context.
 
+The business ID is the tenant boundary for the demo: services, slots, holds, appointments, and callback requests are associated with the business that supplied the ID. The business registry in D1 is the beginning of a future directory of agent-ready businesses.
+
 ```mermaid
 flowchart LR
     Owner[Practice owner] --> Setup[Business setup page]
     Setup -->|Save practice setup| Worker[Cloudflare Worker]
-    Worker -->|Create business ID + save profile| D1[(Cloudflare D1)]
+    Worker -->|Create business ID + save profile| D1[(Cloudflare D1 registry)]
     Worker -->|Return generated snippet| Setup
     Setup -->|Owner copies script| Site[Practice booking page]
     Site --> SDK[SDK script]
@@ -34,6 +38,7 @@ flowchart LR
     Context -->|Agent discovers tools| Agent[AI agent]
     Agent -->|Tool requests| Worker
     Worker --> D1
+    D1 --> Directory[Agent-ready business directory]
 ```
 
 ### Appointment booking flow
@@ -93,8 +98,8 @@ flowchart LR
 | Area | Current demo | Ideal implementation |
 | --- | --- | --- |
 | Practice registration | Real Worker endpoint and D1 persistence | Add authentication, ownership verification, and tenant isolation |
-| Business ID | Generated on save and inserted into the script snippet | Stable public identifier plus private account/tenant ID |
-| Hosted calendar | Sample slots from in-memory demo data | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
+| Business ID | Generated on save, used to scope demo data, and inserted into the script snippet | Stable public identifier plus private account/tenant ID |
+| Hosted calendar | Sample slots from in-memory demo data, scoped per business ID | D1-backed availability with working hours, providers, services, holidays, holds, and expiration |
 | Existing calendar | Selection is stored, but no provider is connected | OAuth-based adapters for Google Calendar, Calendly, or practice-management systems |
 | WebMCP SDK | Real script that registers seven tools when `registerTool` exists | Versioned SDK, origin checks, capability discovery, and backward-compatible tool contracts |
 | Phone callback | Returns dummy appointment options; no call is placed | Queue a request, call through a telephony provider, receive office results, and expose status via request ID |
@@ -145,6 +150,12 @@ flowchart TB
 ```
 
 The key boundary is the adapter layer. The WebMCP tools should stay stable while each calendar or telephony provider implements the provider-specific details behind the API. Booking and confirmation should use stable idempotency keys, explicit hold expiration, provider webhook handling, and reconciliation jobs so retries cannot create duplicate appointments.
+
+WebMCP is only one delivery surface. The same OpenSlot tool contract could later be exposed through a hosted MCP endpoint, a voice agent, or another agent platform. That keeps businesses from having to build a separate integration for every agent surface.
+
+For concurrent booking, a production implementation should serialize hold and confirm operations per business. A Durable Object keyed by business ID is a natural Cloudflare-native option for that single-writer boundary, while D1 remains the durable source of truth. This prevents two agents from successfully claiming the same appointment during a race.
+
+The D1 business registry can also become a directory of agent-ready businesses. Each new business increases the set of useful destinations available to agents, while the stable tool contract keeps discovery and booking consistent across businesses.
 
 ### Suggested production phases
 
