@@ -8,7 +8,7 @@ The idea is simple: register the business, choose how it wants to handle appoint
 
 Our focus is **making WebMCP easier to adopt**, not building another dental booking site. The challenge demo uses a fictional dental practice to make the idea concrete. The same approach could serve salons, repair shops, fitness studios, and other appointment-based businesses.
 
-[Try the simulated business website](https://openslot-webmcp-demo.faizmohammed178.workers.dev/) · [Business registration](https://openslot-webmcp-demo.faizmohammed178.workers.dev/business) · [Architecture](docs/architecture.md) · [Submission copy and testing guide](docs/devpost-submission.md)
+[Watch the demo](https://youtu.be/sjeRE3hHwNY) · [Try the simulated business website](https://openslot-webmcp-demo.faizmohammed178.workers.dev/) · [Business registration](https://openslot-webmcp-demo.faizmohammed178.workers.dev/business) · [Architecture](docs/architecture.md) · [Submission copy and testing guide](docs/devpost-submission.md)
 
 > This is a challenge prototype. Registration, WebMCP tool registration, and backend demo workflows are implemented. Availability, bookings, and phone results are simulated; no external calendar is connected and no phone call is placed. Use fictional information only. The deployed SDK and its demo workflows have also been browser-tested from a separate origin.
 

@@ -74,7 +74,7 @@ The demo does not include a connected calendar API, telephony SDK, or model API.
 - Business setup: https://openslot-webmcp-demo.faizmohammed178.workers.dev/business
 - Source: https://github.com/faiz121/openslot-webmcp
 - License: https://github.com/faiz121/openslot-webmcp/blob/main/LICENSE
-- Video: **ADD THE PUBLIC YOUTUBE URL AFTER UPLOAD.**
+- Video: https://youtu.be/sjeRE3hHwNY
 
 ## Testing instructions
 
@@ -143,7 +143,7 @@ Only show actual tool execution as execution. Label an animation or illustrative
 
 - [ ] Keep the cross-origin test evidence and the security distinction: browser access works, but verified origins and authorization are future production controls.
 - [ ] Publish the reviewed README and documentation to the public repository.
-- [ ] Add the final public YouTube URL. Verify the video is **under three minutes**, plays without signing in, and includes clear audio and a functioning demo explaining WebMCP.
+- [x] Add the final public YouTube URL. The published video is 2 minutes 36 seconds, plays publicly, includes clear audio, and demonstrates the WebMCP flow.
 - [ ] Ensure narration, UI, description, and README make the same real-versus-simulated claims.
 - [ ] Check the final video for material you do not have permission to use.
 - [ ] Confirm all links work while signed out and finish any required Devpost profile/team fields.
